@@ -1,44 +1,55 @@
 from base64 import b64encode
-from os import makedirs
-from os.path import join, basename
-from sys import argv
+from PIL import Image
+from six import BytesIO
+import os
 import json
 import requests
 import re
+import cv2
+from dotenv import load_dotenv
 
-ENDPOINT_URL = 'https://vision.googleapis.com/v1/images:annotate'
-RESULTS_DIR = 'jsons'
-makedirs(RESULTS_DIR, exist_ok=True)
+load_dotenv()
 
-def make_image_data_list(image_filenames):
+def convert_array_to_bytes(frame):
     """
-    image_filenames is a list of filename strings
+    frame is an ndarray that we got from OpenCV
+    Returns a base64-encoded string
+    """
+    frame_im = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    pil_im = Image.fromarray(frame_im)
+    stream = BytesIO()
+    pil_im.save(stream, format="JPEG")
+    stream.seek(0)
+    img_for_post = stream.read()
+    img_base64 = b64encode(img_for_post)
+    return img_base64
+
+def make_image_data_list(frame):
+    """
     Returns a list of dicts formatted as the Vision API
         needs them to be
     """
     img_requests = []
-    for imgname in image_filenames:
-        with open(imgname, 'rb') as f:
-            ctxt = b64encode(f.read()).decode()
-            img_requests.append({
-                    'image': {'content': ctxt},
-                    'features': [{
-                        'type': 'TEXT_DETECTION',
-                        'maxResults': 1
-                    }]
-            })
+    ctxt = convert_array_to_bytes(frame).decode()
+    img_requests.append({
+            'image': {'content': ctxt},
+            'features': [{
+                'type': 'TEXT_DETECTION',
+                'maxResults': 1
+            }]
+    })
     return img_requests
 
-def make_image_data(image_filenames):
+def make_image_data(frame):
     """Returns the image data lists as bytes"""
-    imgdict = make_image_data_list(image_filenames)
+    imgdict = make_image_data_list(frame)
     return json.dumps({"requests": imgdict }).encode()
 
 
-def request_ocr(api_key, image_filenames):
-    response = requests.post(ENDPOINT_URL,
-                             data=make_image_data(image_filenames),
-                             params={'key': api_key},
+def request_ocr(frame):
+    response = requests.post(os.getenv("ENDPOINT_URL"),
+                             data=make_image_data(frame),
+                             params={'key': os.getenv("GCLOUD_VISION_API_KEY")},
                              headers={'Content-Type': 'application/json'})
     return response
 
@@ -53,33 +64,33 @@ def india_regex(data):
         print("No plate detected")
     return 0
 
-if __name__ == '__main__':
-    api_key, *image_filenames = argv[1:]
-    if not api_key or not image_filenames:
-        print("""
-            Please supply an api key, then one or more image filenames
-
-            $ python cloudvisreq.py api_key image1.jpg image2.png""")
+def panama_regex(data):
+    match=re.match('[0-9A-Z]{2}[0-9]{4}',data)
+    if(re.match('[0-9A-Z]{2}[0-9]{4}',data)):
+        print(match.group(0))
     else:
-        response = request_ocr(api_key, image_filenames)
-        if response.status_code != 200 or response.json().get('error'):
-            print(response.text)
-        else:
-            for idx, resp in enumerate(response.json()['responses']):
-                # save to JSON file
-                imgname = image_filenames[idx]
-                jpath = join(RESULTS_DIR, basename(imgname) + '.json')
-                with open(jpath, 'w') as f:
-                    datatxt = json.dumps(resp, indent=2)
-                    """print("Wrote", len(datatxt), "bytes to", jpath)"""
-                    f.write(datatxt)
+        pass
+    return 0
 
-                # print the plaintext to screen for convenience
-                """print("---------------------------------------------")"""
-                t = resp['textAnnotations'][0]
-                """print("    Bounding Polygon:")"""
-                """print(t['boundingPoly'])"""
-                """print("    Text:")"""
-                dat= t['description']
-                print("The complete OCR detected is " + dat)
-                india_regex(dat)
+STATUS = True
+
+'''
+Using the Video Caputure method from OpenCV to connect to a video source:
+It can be a video file, a MJPEG IP Camera stream, 
+or a direct video camera connected to your machine (webcam, usb camera, etc).
+'''
+cap = cv2.VideoCapture(os.getenv("VIDEO_PATH"))
+while STATUS == True:
+    STATUS, frame = cap.read()
+    response = request_ocr(frame)
+    if response.status_code != 200 or response.json().get('error'):
+        print(response.text)
+    else:
+        for i, annotation in enumerate(response.json()['responses'][0]['textAnnotations']):
+            if i == 0:
+                pass
+            else:
+                panama_regex(annotation['description'])
+    
+cap.release()
+cv2.destroyAllWindows()
