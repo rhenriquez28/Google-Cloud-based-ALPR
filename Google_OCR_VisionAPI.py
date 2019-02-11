@@ -12,26 +12,22 @@ load_dotenv()
 
 client = None
 db = None
-db_selector = os.getenv("DB_SELECTOR")
-
+db_selector = int(os.getenv("DB_SELECTOR"))
 
 def json_to_dict(json_str):
     return json.loads(json.dumps(json_str))
 
 def db_init():
     if db_selector == 1:
-        db = mariadb.connect(host=os.getenv("DB_HOST"),
-                                            user=os.getenv("DB_USER"), 
-                                            password=os.getenv("DB_PASSWORD"), 
-                                            database=os.getenv("DB_NAME"), 
-                                            port=os.getenv("DB_PORT"))
+        return mariadb.connect(host=os.getenv("DB_HOST"),
+                                user=os.getenv("DB_USER"), 
+                                password=os.getenv("DB_PASSWORD"), 
+                                database=os.getenv("DB_NAME"), 
+                                port=os.getenv("DB_PORT"))
     elif db_selector == 2:
-        client = Cloudant(os.getenv("SERVICE_USERNAME"),
-                          os.getenv("SERVICE_PASSWORD"), 
+        return Cloudant(os.getenv("SERVICE_USERNAME"),
+                        os.getenv("SERVICE_PASSWORD"), 
                           url=os.getenv("SERVICE_URL"))
-        client.connect()
-        db = client[os.getenv("CLOUDANT_DB_NAME")]
-
 
 def query_str_builder(plates):
     plates_length = len(plates)
@@ -133,10 +129,14 @@ def panama_regex(data):
         return match.group(0)
     else:
         pass
-    return 0
 
 if __name__ == "__main__":
-    db_init()
+    if db_selector == 1:
+        db = db_init()
+    elif db_selector == 2:
+        client = db_init()
+        client.connect()
+        db = client[os.getenv("CLOUDANT_DB_NAME")]
     '''
     Using the Video Caputure method from OpenCV to connect to a video source:
     It can be a video file, a MJPEG IP Camera stream, 
@@ -150,12 +150,15 @@ if __name__ == "__main__":
         if response.status_code != 200 or response.json().get('error'):
             print(response.text)
         else:
+            plate = None
             plates = []
             for i, annotation in enumerate(response.json()['responses'][0]['textAnnotations']):
                 if i == 0:
                     pass
                 else:
-                    plates.append(panama_regex(annotation['description']))
+                    plate = panama_regex(annotation['description'])
+                    if plate:
+                        plates.append(plate)
             db_check(plates)
     db_close()
     cap.release()
